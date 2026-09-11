@@ -51,3 +51,40 @@ kernel; it rebuilds automatically on kernel upgrades.
 3. Watch `dmesg -w` during the test — the guard has no visible log output
    in the fixed path; a stuck host or a recurring soft lockup message
    means the fix didn't take (wrong module loaded, or a different bug).
+
+## Recovering interfaces after a manual module reload
+
+Do not run `modprobe -r atl1c` / `modprobe atl1c` while a port is actively
+mid-flap (link down, "MAC state machine can't be idle" repeating). Pulling
+the driver out from under a NIC that's stuck resetting leaves the hardware
+wedged, and re-probing then fails for all four functions:
+
+```
+atl1c 0000:05:00.0: probe with driver atl1c failed with error -5
+```
+
+A plain `modprobe -r atl1c && modprobe atl1c` will **not** fix this once it
+happens — the PCI core needs to fully re-enumerate the device, not just
+re-attach the driver. Force that with a remove + rescan instead:
+
+```
+sudo modprobe -r atl1c
+echo 1 | sudo tee /sys/bus/pci/devices/0000:05:00.0/remove
+echo 1 | sudo tee /sys/bus/pci/devices/0000:05:00.1/remove
+echo 1 | sudo tee /sys/bus/pci/devices/0000:05:00.2/remove
+echo 1 | sudo tee /sys/bus/pci/devices/0000:05:00.3/remove
+echo 1 | sudo tee /sys/bus/pci/rescan
+```
+
+Then verify the card came back and bring the interfaces up:
+
+```
+lspci -k -s 05:00.0            # should show "Kernel driver in use: atl1c"
+ip link show | grep -A1 enp5s0f
+modinfo atl1c | grep filename  # confirm still the patched module
+sudo netplan apply             # or: ip link set enp5s0fX up, per interface
+```
+
+If the PCI rescan still fails to bring the card back, the MAC is wedged at
+the hardware level and needs a full reboot to reset — don't chase it
+further by hand.
