@@ -75,7 +75,7 @@ static void atl1c_disable_l0s_l1(struct atl1c_hw *hw);
 static void atl1c_set_aspm(struct atl1c_hw *hw, u16 link_speed);
 static void atl1c_start_mac(struct atl1c_adapter *adapter);
 static int atl1c_up(struct atl1c_adapter *adapter);
-static void atl1c_down(struct atl1c_adapter *adapter);
+static int atl1c_down(struct atl1c_adapter *adapter);
 static int atl1c_reset_mac(struct atl1c_hw *hw);
 static void atl1c_reset_dma_ring(struct atl1c_adapter *adapter);
 static int atl1c_configure(struct atl1c_adapter *adapter);
@@ -341,7 +341,25 @@ static void atl1c_common_task(struct work_struct *work)
 
 	if (test_and_clear_bit(ATL1C_WORK_EVENT_RESET, &adapter->work_event)) {
 		netif_device_detach(netdev);
-		atl1c_down(adapter);
+		if (atl1c_down(adapter)) {
+			/*
+			 * The MAC can end up wedged after a PCIe link event
+			 * (e.g. a neighboring device's reboot flapping the
+			 * link) badly enough that atl1c_down()'s soft MAC
+			 * reset can't clear it, leaving the device stuck
+			 * until someone manually unbinds the driver and
+			 * rescans the PCI bus. This workqueue context holds
+			 * no lock the PCI core also needs (unlike ->probe()
+			 * or a system-sleep ->suspend()/->resume(), which run
+			 * under the device lock), so it's safe to escalate to
+			 * a PCIe function-level reset here and retry before
+			 * bringing the device back up.
+			 */
+			dev_warn(&adapter->pdev->dev,
+				 "MAC reset failed, trying a PCIe reset\n");
+			if (!pci_reset_function(adapter->pdev))
+				atl1c_reset_mac(&adapter->hw);
+		}
 		atl1c_up(adapter);
 		netif_device_attach(netdev);
 	}
@@ -2427,10 +2445,11 @@ err_up:
 	return err;
 }
 
-static void atl1c_down(struct atl1c_adapter *adapter)
+static int atl1c_down(struct atl1c_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
 	int i;
+	int err;
 
 	atl1c_del_timer(adapter);
 	adapter->work_event = 0; /* clear all event */
@@ -2447,12 +2466,13 @@ static void atl1c_down(struct atl1c_adapter *adapter)
 	/* disable ASPM if device inactive */
 	atl1c_disable_l0s_l1(&adapter->hw);
 	/* reset MAC to disable all RX/TX */
-	atl1c_reset_mac(&adapter->hw);
+	err = atl1c_reset_mac(&adapter->hw);
 	msleep(1);
 
 	adapter->link_speed = SPEED_0;
 	adapter->link_duplex = -1;
 	atl1c_reset_dma_ring(adapter);
+	return err;
 }
 
 /**

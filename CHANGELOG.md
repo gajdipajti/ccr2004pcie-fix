@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.1 - 2026-09-11 (untested, pending validation)
+
+- Second, separate issue found in production use: even with 1.0 installed
+  (no more crashes), the four interfaces did not come back on their own
+  after every single Mikrotik CCR2004 reboot. Recovery required manually
+  `modprobe -r`ing the driver, removing all four PCI functions, and
+  rescanning the bus.
+- Root cause: `atl1c`'s own tx-timeout recovery path
+  (`atl1c_tx_timeout()` -> `atl1c_common_task()` -> `atl1c_down()` /
+  `atl1c_up()`) only issues a register-level MAC soft reset
+  (`atl1c_reset_mac()`). After the kind of PCIe link event a neighboring
+  device's reboot causes, that soft reset can time out and fail
+  (`MAC state machine can't be idle since disabled for 10ms second`) -
+  and `atl1c_down()` previously ignored that failure and proceeded to
+  bring the interface back up on top of a MAC that was never actually
+  reset. Even a full `modprobe -r`/`modprobe` (which re-runs
+  `atl1c_probe()`, itself already doing a fuller reset sequence) hit the
+  same soft-reset timeout and failed to probe with `-EIO` (-5). Only an
+  actual PCI-level `remove`+`rescan`, which forces real hardware
+  re-enumeration, reliably cleared it.
+- Fix: `atl1c_down()` now reports whether its MAC reset succeeded.
+  `atl1c_common_task()`'s reset path escalates to a PCIe function-level
+  reset (`pci_reset_function()`, i.e. FLR / secondary-bus reset) and
+  retries the MAC reset once before bringing the interface back up.
+- Deliberately NOT added inside `atl1c_reset_mac()` itself or in
+  `atl1c_down()` directly: `pci_reset_function()` takes the device's
+  `device_lock`, which is already held by the driver core while
+  `atl1c_probe()` and `atl1c_suspend()`/`atl1c_resume()` run - calling it
+  from those paths would self-deadlock. The escalation only happens in
+  `atl1c_common_task()`'s workqueue context, which holds no such lock.
+- Needs the same reboot-cycle validation as 1.0 before being trusted,
+  since this touches the actual reset/recovery path rather than just
+  guarding a read.
+
 ## 1.0 - 2026-09-11
 
 - Initial DKMS package wrapping upstream `atl1c` (Attansic/Atheros L1C 4-port
