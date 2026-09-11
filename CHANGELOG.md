@@ -1,6 +1,25 @@
 # Changelog
 
-## 1.1 - 2026-09-11 (untested, pending validation)
+## 1.2 - 2026-09-11 (untested, pending validation)
+
+- 1.1 was tested on `proxy`: the PCIe FLR escalation never fired (the MAC
+  soft reset succeeded on its own), yet after the Mikrotik CCR2004 reboot
+  all four interfaces stayed at `NO-CARRIER` indefinitely - administratively
+  `UP`, `ip link set up` a no-op, no further recovery. Only a full PCI
+  `remove`+`rescan` (which also resets the PHY) brought the link back.
+- Root cause: `atl1c_down()`'s reset only ever touches the MAC
+  (`atl1c_reset_mac()`). It never calls `atl1c_phy_reset()`, which
+  `atl1c_probe()` and `atl1c_resume()` both do as part of their own
+  recovery. A PCIe link event can leave the PHY itself stuck even when
+  the MAC reset succeeds cleanly - nothing in the automatic recovery path
+  ever touches the PHY, so the link can never renegotiate on its own.
+- Fix: `atl1c_common_task()`'s reset path now also calls
+  `atl1c_phy_reset()` unconditionally (regardless of whether the FLR
+  escalation from 1.1 fired), matching what `probe()`/`resume()` already
+  do, before bringing the interface back up.
+- Needs the same reboot-cycle validation as 1.0/1.1 before being trusted.
+
+## 1.1 - 2026-09-11 (superseded by 1.2, PHY was still not being reset)
 
 - Second, separate issue found in production use: even with 1.0 installed
   (no more crashes), the four interfaces did not come back on their own

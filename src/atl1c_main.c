@@ -360,6 +360,16 @@ static void atl1c_common_task(struct work_struct *work)
 			if (!pci_reset_function(adapter->pdev))
 				atl1c_reset_mac(&adapter->hw);
 		}
+		/*
+		 * atl1c_down()'s reset above only resets the MAC. A PCIe
+		 * link event on a neighboring device can leave the PHY
+		 * itself stuck even when the MAC reset succeeds - the link
+		 * never renegotiates and the interface sits at NO-CARRIER
+		 * indefinitely. atl1c_probe() and atl1c_resume() already
+		 * reset the PHY as part of their own recovery sequence; do
+		 * the same here so this automatic path covers that case too.
+		 */
+		atl1c_phy_reset(&adapter->hw);
 		atl1c_up(adapter);
 		netif_device_attach(netdev);
 	}
