@@ -248,12 +248,13 @@ void atl1c_reinit_locked(struct atl1c_adapter *adapter)
 	clear_bit(__AT_RESETTING, &adapter->flags);
 }
 
-static void atl1c_check_link_status(struct atl1c_adapter *adapter)
+static int atl1c_check_link_status(struct atl1c_adapter *adapter)
 {
 	struct atl1c_hw *hw = &adapter->hw;
 	struct net_device *netdev = adapter->netdev;
 	struct pci_dev    *pdev   = adapter->pdev;
 	int err;
+	int mac_reset_err = 0;
 	unsigned long flags;
 	u16 speed, duplex;
 	bool link;
@@ -266,9 +267,20 @@ static void atl1c_check_link_status(struct atl1c_adapter *adapter)
 		/* link down */
 		netif_carrier_off(netdev);
 		hw->hibernate = true;
-		if (atl1c_reset_mac(hw) != 0)
-			if (netif_msg_hw(adapter))
-				dev_warn(&pdev->dev, "reset mac failed\n");
+		mac_reset_err = atl1c_reset_mac(hw);
+		if (mac_reset_err)
+			dev_warn(&pdev->dev, "reset mac failed\n");
+		/*
+		 * This only resets the MAC. A PCIe link event on a
+		 * neighboring device can leave the PHY itself stuck even
+		 * when the MAC reset succeeds - the link never renegotiates
+		 * and the interface sits at NO-CARRIER indefinitely.
+		 * atl1c_probe() and atl1c_resume() already reset the PHY as
+		 * part of their own recovery sequence; do the same here.
+		 * Safe from every caller of this function - atl1c_phy_reset()
+		 * touches no lock the PCI core also needs.
+		 */
+		atl1c_phy_reset(hw);
 		atl1c_set_aspm(hw, SPEED_0);
 		atl1c_post_phy_linkchg(hw, SPEED_0);
 		atl1c_reset_dma_ring(adapter);
@@ -280,7 +292,7 @@ static void atl1c_check_link_status(struct atl1c_adapter *adapter)
 		err = atl1c_get_speed_and_duplex(hw, &speed, &duplex);
 		spin_unlock_irqrestore(&adapter->mdio_lock, flags);
 		if (unlikely(err))
-			return;
+			return 0;
 		/* link result is our setting */
 		if (adapter->link_speed != speed ||
 		    adapter->link_duplex != duplex) {
@@ -300,6 +312,7 @@ static void atl1c_check_link_status(struct atl1c_adapter *adapter)
 		if (!netif_carrier_ok(netdev))
 			netif_carrier_on(netdev);
 	}
+	return mac_reset_err;
 }
 
 static void atl1c_link_chg_event(struct atl1c_adapter *adapter)
@@ -372,15 +385,10 @@ static void atl1c_common_task(struct work_struct *work)
 			}
 		}
 		/*
-		 * atl1c_down()'s reset above only resets the MAC. A PCIe
-		 * link event on a neighboring device can leave the PHY
-		 * itself stuck even when the MAC reset succeeds - the link
-		 * never renegotiates and the interface sits at NO-CARRIER
-		 * indefinitely. atl1c_probe() and atl1c_resume() already
-		 * reset the PHY as part of their own recovery sequence; do
-		 * the same here so this automatic path covers that case too.
+		 * atl1c_up() -> atl1c_check_link_status() already resets the
+		 * PHY if the link is still down at this point (see there),
+		 * so no separate phy reset is needed here.
 		 */
-		atl1c_phy_reset(&adapter->hw);
 		atl1c_up(adapter);
 		netif_device_attach(netdev);
 	}
@@ -388,7 +396,32 @@ static void atl1c_common_task(struct work_struct *work)
 	if (test_and_clear_bit(ATL1C_WORK_EVENT_LINK_CHANGE,
 		&adapter->work_event)) {
 		atl1c_irq_disable(adapter);
-		atl1c_check_link_status(adapter);
+		if (atl1c_check_link_status(adapter)) {
+			/*
+			 * Same MAC-wedged scenario as the RESET branch above,
+			 * just reached via an ordinary link-down interrupt
+			 * instead of a TX watchdog timeout - which is the more
+			 * likely trigger in practice, since a link event fires
+			 * long before any TX queue would time out. This
+			 * workqueue context holds no lock the PCI core also
+			 * needs, so the same FLR escalation is safe here too.
+			 */
+			int flr_err, retry_err;
+
+			dev_warn(&adapter->pdev->dev,
+				 "MAC reset failed, trying a PCIe reset\n");
+			flr_err = pci_reset_function(adapter->pdev);
+			if (!flr_err) {
+				retry_err = atl1c_reset_mac(&adapter->hw);
+				dev_warn(&adapter->pdev->dev,
+					 "PCIe reset done, MAC reset retry %s\n",
+					 retry_err ? "still failed" : "succeeded");
+			} else {
+				dev_warn(&adapter->pdev->dev,
+					 "PCIe reset itself failed, err=%d\n",
+					 flr_err);
+			}
+		}
 		atl1c_irq_enable(adapter);
 	}
 }

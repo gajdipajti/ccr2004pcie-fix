@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.4 - 2026-09-12 (untested, pending validation)
+
+- Closes the gap flagged in 1.3: `atl1c_check_link_status()` (the
+  LINK_CHANGE path, reached on every ordinary link-down/up interrupt -
+  the most likely trigger in practice, since it fires long before any TX
+  queue would ever time out) had the exact same issues as the RESET
+  branch, and was completely unpatched by 1.1/1.2/1.3:
+  - it only reset the MAC, never the PHY;
+  - its one failure log (`reset mac failed`) was gated behind
+    `netif_msg_hw(adapter)` and easy to miss;
+  - it had no FLR escalation at all.
+- `atl1c_check_link_status()` now: always logs a MAC reset failure, always
+  resets the PHY when the link is down (matching `atl1c_probe()`/
+  `atl1c_resume()`), and returns whether the MAC reset failed.
+- `atl1c_common_task()`'s LINK_CHANGE branch now escalates to the same
+  FLR-and-retry sequence as the RESET branch when that MAC reset fails -
+  this is a safe call site (workqueue, no device_lock held), same
+  reasoning as 1.1.
+- Removed the RESET branch's now-redundant explicit `atl1c_phy_reset()`
+  call added in 1.2: `atl1c_up()` calls `atl1c_check_link_status()` at
+  the end of its own sequence, which now does the PHY reset itself if
+  the link is still down at that point - no need for a second, unconditional
+  call.
+- `atl1c_check_link_status()` is also called directly from `atl1c_up()`,
+  which is reachable from `atl1c_resume()` under `device_lock` during
+  system sleep. The FLR escalation is deliberately NOT added inside
+  `atl1c_check_link_status()` itself for that reason (same device_lock
+  deadlock risk as the RESET branch's design in 1.1) - it only lives in
+  `atl1c_common_task()`'s direct call, which is always workqueue-only.
+  The PHY reset is safe everywhere and stays inside the shared function.
+- Needs the same reboot-cycle validation as every prior version.
+
 ## 1.3 - 2026-09-12 (instrumentation only, no new recovery behavior)
 
 - 1.2 was tested on `proxy`. Result was inconclusive on whether the FLR
