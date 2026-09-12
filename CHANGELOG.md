@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.5 - 2026-09-12 (untested, pending validation)
+
+- 1.4 was tested on `proxy` with full real-hardware logging. Result:
+  the FLR escalation is a dead end. Twice observed:
+  - `pci_reset_function()` returned `-25` (`-ENOTTY`, meaning the PCI
+    core determined no reset method - FLR or secondary-bus - is usable
+    on this AR8151 hardware) - no reset actually attempted.
+  - A later occurrence: `pci_reset_function()` reported no error, but
+    the retried `atl1c_reset_mac()` explicitly logged "still failed".
+  In both cases the driver went on to report `NIC Link is Up<65535
+  Mbps ...>` - `65535` is `0xffff`, the same garbage-read sentinel that
+  caused the original soft lockup - not a real link. The TX watchdog
+  fired again minutes later on the same port, confirming no real link
+  had come up. Every prior software-only recovery (soft MAC reset, PHY
+  reset, FLR) has produced this same fake recovery. Only the manual PCI
+  `remove`+`rescan` has ever produced a genuinely working link (a real
+  negotiated speed like 25000 Mbps, not the 0xffff sentinel).
+- Root cause (best current understanding): `remove`+`rescan` power-cycles
+  the PCI function (D3 -> D0) as a side effect of full re-enumeration.
+  Nothing in-band - a register soft reset, a PHY reset, or a logical
+  FLR - was ever equivalent to that actual power removal, so none of
+  them could clear whatever hardware state genuinely needs a real power
+  transition to clear.
+- Fix: replaced the FLR escalation (in both `atl1c_common_task()`
+  branches) with a `pci_set_power_state(PCI_D3hot)` -> `PCI_D0`
+  power-cycle, moved directly into `atl1c_reset_mac()` itself - the one
+  function every caller (`atl1c_probe()`, `atl1c_down()`,
+  `atl1c_check_link_status()`, `atl1c_resume()`) already routes
+  through, escalating automatically wherever a soft reset fails.
+  `pci_set_power_state()` takes no lock the PCI core also needs (unlike
+  `pci_reset_function()`), so unlike the FLR attempt this needs no
+  workqueue-only restriction - it's safe from every caller, including
+  `->probe()`/`->suspend()`/`->resume()`.
+- Simplified `atl1c_common_task()`'s two branches back to their original
+  shape now that the escalation logic lives in the shared function;
+  reverted `atl1c_down()`/`atl1c_check_link_status()` back to `void`
+  since nothing external needs their reset status anymore. Net result
+  is a smaller diff than 1.1-1.4 combined despite fixing the real
+  problem those didn't.
+- Needs the same reboot-cycle validation as every prior version - this
+  time specifically checking for a real negotiated link speed (not
+  0xffff) after automatic recovery, and confirming traffic actually
+  passes rather than just trusting the "Link is Up" log line.
+
 ## 1.4 - 2026-09-12 (untested, pending validation)
 
 - Closes the gap flagged in 1.3: `atl1c_check_link_status()` (the
