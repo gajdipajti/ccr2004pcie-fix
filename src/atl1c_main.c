@@ -263,8 +263,22 @@ static void atl1c_watchdog(struct timer_list *t)
 							    watchdog_timer);
 
 	if (!test_bit(__AT_DOWN, &adapter->flags)) {
-		set_bit(ATL1C_WORK_EVENT_LINK_CHANGE, &adapter->work_event);
-		schedule_work(&adapter->common_task);
+		/*
+		 * Don't step on an active backoff retry cycle
+		 * (atl1c_schedule_reset_retry()): it already re-checks on
+		 * its own deliberately spaced-out schedule, and this timer
+		 * firing every ATL1C_WATCHDOG_PERIOD would otherwise trigger
+		 * common_task early and collapse that backoff into a flat
+		 * ATL1C_WATCHDOG_PERIOD cadence - confirmed on real hardware.
+		 * Only step in once nothing is actively retrying, to catch a
+		 * link recovery that a missing/lost interrupt would
+		 * otherwise never reveal.
+		 */
+		if (adapter->reset_retry_count == 0) {
+			set_bit(ATL1C_WORK_EVENT_LINK_CHANGE,
+				&adapter->work_event);
+			schedule_work(&adapter->common_task);
+		}
 		mod_timer(&adapter->watchdog_timer,
 			  jiffies + ATL1C_WATCHDOG_PERIOD);
 	}

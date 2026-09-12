@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.8 - 2026-09-12 (untested, pending validation)
+
+- 1.7 tested on real hardware and found a self-inflicted bug: the new
+  watchdog timer fires unconditionally every `ATL1C_WATCHDOG_PERIOD`
+  (5s) and, like the backoff retry, just sets a work_event bit and
+  calls `schedule_work(&adapter->common_task)`. Since both mechanisms
+  drive the same bits, the watchdog's frequent unconditional trigger
+  collapsed the intended 5/10/15/20/25/30s backoff into a flat ~5s
+  cadence - confirmed in the log (`retrying in 10s` followed by the
+  next attempt only ~5s later, every time), blowing through all 6
+  retries in ~30s instead of the intended ~105s.
+- Fix: `atl1c_watchdog()` now only triggers a link-status check when
+  `adapter->reset_retry_count == 0` - i.e. only when nothing is
+  actively in a backoff retry cycle. The backoff still re-checks on
+  its own deliberately spaced-out schedule undisturbed; the watchdog's
+  job is purely to catch a link recovery once retries have either
+  succeeded or given up and gone quiet, which is where the original
+  1.6 gap actually was.
+- Needs the same reboot-cycle validation as every prior version - this
+  time checking that the retry log's stated delay (`retrying in Ns`)
+  actually matches the real time between attempts.
+
 ## 1.7 - 2026-09-12 (untested, pending validation)
 
 - 1.6 was tested on real hardware. `atl1c_reset_mac()` succeeded on the
