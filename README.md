@@ -88,3 +88,35 @@ sudo netplan apply             # or: ip link set enp5s0fX up, per interface
 If the PCI rescan still fails to bring the card back, the MAC is wedged at
 the hardware level and needs a full reboot to reset — don't chase it
 further by hand.
+
+## Notes
+
+Surveyed the sibling drivers in `drivers/net/ethernet/atheros/` for the
+same two bug classes fixed here:
+
+- **Unbounded tx-clean loop** (what 1.0 fixes in `atl1c_clean_tx()`): also
+  present, unfixed, in:
+  - `atl1e` — `atl1e_clean_tx_irq()` in atl1e_main.c: identical shape,
+    `while (next_to_clean != hw_next_to_clean)` with the hardware value
+    read straight from a register, no range check, no budget cap.
+  - `atlx`/`atl1` — `atl1_intr_tx()` in atl1.c: same pattern, reading the
+    consumer index from a DMA-shared "command block" instead of a
+    register, still unbounded.
+  - `alx` (the newer, actively maintained driver for later Atheros/
+    Qualcomm chip revisions) already solved this class of bug
+    independently, but differently: `alx_clean_tx_irq()` bounds the loop
+    with a decrementing `budget` counter instead of range-checking the
+    register value (`while (sw_read_idx != hw_read_idx && budget > 0)`).
+    That's arguably stronger than our guard — it can't spin forever on
+    *any* garbage value, not just an out-of-range one.
+  - Worth submitting an equivalent fix upstream for `atl1e` and `atl1` -
+    same bug, same driver family, same maintainer (netdev, ATLX ETHERNET
+    DRIVERS).
+
+- **Recovery path not resetting the PHY** (what 1.2 fixes): `alx` has the
+  same gap. Its tx-timeout/reset-work path (`alx_reset()` ->
+  `alx_reinit()` -> `alx_halt()`/`alx_activate()`) only calls
+  `alx_reset_mac()`, never `alx_reset_phy()` - that's only called from
+  `alx_probe()` and `alx_resume()`, exactly like `atl1c` before 1.2. `alx`
+  also has no `pci_reset_function()`/FLR fallback anywhere (what 1.1
+  adds). Neither of our two recovery-path fixes was already solved there.
