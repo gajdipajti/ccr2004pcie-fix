@@ -241,6 +241,35 @@ static void atl1c_phy_config(struct timer_list *t)
 	spin_unlock_irqrestore(&adapter->mdio_lock, flags);
 }
 
+#define ATL1C_WATCHDOG_PERIOD (5 * HZ)
+
+/**
+ * atl1c_watchdog - Timer Call-back
+ * @t: timer list containing pointer to netdev cast into an unsigned long
+ *
+ * Link-change detection is otherwise purely interrupt-driven, which
+ * assumes the far end (or, for a PCIe-emulated port, whatever firmware is
+ * emulating it) reliably raises a fresh interrupt when the link comes
+ * back. Confirmed on real hardware that this isn't guaranteed - the
+ * interrupt count for a port can go completely flat and stay that way
+ * indefinitely while the link is down, with no further interrupt ever
+ * arriving even once the far end is genuinely back. Poll the link status
+ * on our own schedule as a safety net against a missed or never-sent
+ * link-change interrupt, instead of waiting forever for one.
+ */
+static void atl1c_watchdog(struct timer_list *t)
+{
+	struct atl1c_adapter *adapter = timer_container_of(adapter, t,
+							    watchdog_timer);
+
+	if (!test_bit(__AT_DOWN, &adapter->flags)) {
+		set_bit(ATL1C_WORK_EVENT_LINK_CHANGE, &adapter->work_event);
+		schedule_work(&adapter->common_task);
+		mod_timer(&adapter->watchdog_timer,
+			  jiffies + ATL1C_WATCHDOG_PERIOD);
+	}
+}
+
 void atl1c_reinit_locked(struct atl1c_adapter *adapter)
 {
 	atl1c_down(adapter);
@@ -439,6 +468,7 @@ static void atl1c_common_task(struct work_struct *work)
 static void atl1c_del_timer(struct atl1c_adapter *adapter)
 {
 	timer_delete_sync(&adapter->phy_config_timer);
+	timer_delete_sync(&adapter->watchdog_timer);
 }
 
 
@@ -2500,6 +2530,7 @@ static int atl1c_up(struct atl1c_adapter *adapter)
 		napi_enable(&adapter->rrd_ring[i].napi);
 	atl1c_irq_enable(adapter);
 	netif_start_queue(netdev);
+	mod_timer(&adapter->watchdog_timer, jiffies + ATL1C_WATCHDOG_PERIOD);
 	return err;
 
 err_up:
@@ -2792,6 +2823,7 @@ static int atl1c_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		netif_napi_add_tx(netdev, &adapter->tpd_ring[i].napi,
 				  atl1c_clean_tx);
 	timer_setup(&adapter->phy_config_timer, atl1c_phy_config, 0);
+	timer_setup(&adapter->watchdog_timer, atl1c_watchdog, 0);
 	/* setup the private structure */
 	err = atl1c_sw_init(adapter);
 	if (err) {

@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.7 - 2026-09-12 (untested, pending validation)
+
+- 1.6 was tested on real hardware. `atl1c_reset_mac()` succeeded on the
+  first attempt (no failure logged), so the 1.6 retry logic never had
+  anything to trigger against - and yet the interfaces stayed down for
+  much longer than a confirmed <60s RouterOS reboot time, even after
+  RouterOS itself was fully up. Root cause, confirmed with two
+  carefully-ordered `/proc/interrupts` checks (taken while genuinely
+  stuck, not contaminated by an earlier manual reset): interrupt counts
+  for all four ports went completely flat and stayed flat indefinitely
+  - no further interrupt arrived at all while down, even minutes later.
+- These four ports are PCIe-transport emulated by the CCR2004's own
+  AL52400 SoC (confirmed via its block diagram - only two SFP28 ports
+  and a management interface are real hardware; these four exist only
+  as an emulation over the PCIe lanes). Link-change detection in this
+  driver was purely interrupt-driven, with a `watchdog_timer` field
+  declared in the adapter struct but never actually wired up anywhere
+  - dead code. If the far end's interrupt generation for a virtual port
+  doesn't resume after its own reboot for whatever reason, nothing on
+  the Linux side would ever notice the link coming back, no matter how
+  long it waited.
+- Fix: wired up `watchdog_timer` as a real periodic poll (every 5s)
+  that unconditionally re-checks link status via the existing
+  LINK_CHANGE work-event path, independent of whether a hardware
+  interrupt ever fires. Armed in `atl1c_up()`, cancelled in
+  `atl1c_del_timer()` (already called from `atl1c_down()`/
+  `atl1c_close()`), self-rearming via `mod_timer()` each time it runs.
+- Needs the same reboot-cycle validation as every prior version -
+  this time watching specifically for the interface coming up on its
+  own within a few seconds of RouterOS actually finishing its boot,
+  even with interrupts having gone silent.
+
 ## 1.6 - 2026-09-12 (untested, pending validation)
 
 - 1.5's D3hot->D0 power-cycle was tested on real hardware and made
