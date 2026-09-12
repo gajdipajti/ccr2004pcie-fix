@@ -355,10 +355,21 @@ static void atl1c_common_task(struct work_struct *work)
 			 * a PCIe function-level reset here and retry before
 			 * bringing the device back up.
 			 */
+			int flr_err, retry_err;
+
 			dev_warn(&adapter->pdev->dev,
 				 "MAC reset failed, trying a PCIe reset\n");
-			if (!pci_reset_function(adapter->pdev))
-				atl1c_reset_mac(&adapter->hw);
+			flr_err = pci_reset_function(adapter->pdev);
+			if (!flr_err) {
+				retry_err = atl1c_reset_mac(&adapter->hw);
+				dev_warn(&adapter->pdev->dev,
+					 "PCIe reset done, MAC reset retry %s\n",
+					 retry_err ? "still failed" : "succeeded");
+			} else {
+				dev_warn(&adapter->pdev->dev,
+					 "PCIe reset itself failed, err=%d\n",
+					 flr_err);
+			}
 		}
 		/*
 		 * atl1c_down()'s reset above only resets the MAC. A PCIe

@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.3 - 2026-09-12 (instrumentation only, no new recovery behavior)
+
+- 1.2 was tested on `proxy`. Result was inconclusive on whether the FLR
+  escalation from 1.1 does anything useful: `lspci -tv` + a dmesg grep for
+  `pcieport`/`pciehp`/AER showed no PCIe-level hotplug/link event at all
+  on the `05:00.x` functions' parent root port (`00:0d.0`) - ruling out a
+  host-side PCIe hotplug/electrical-link theory. The interfaces sat at
+  `NO-CARRIER` for 8+ hours with zero further driver log activity after
+  the automatic recovery ran, and a later manual `modprobe -r`/`modprobe`
+  (bypassing the automatic recovery path entirely) then failed probe
+  with `-5` for all four functions.
+- Since the AR8151 chip is old/cheap silicon with a spotty PCIe-compliance
+  track record, `pci_reset_function()` (FLR, falling back to a secondary
+  bus reset if unsupported) may be silently doing nothing useful on this
+  hardware - we had no logging to tell either way.
+- This release adds no new recovery behavior: it only logs
+  `pci_reset_function()`'s actual return code and whether the retried
+  `atl1c_reset_mac()` succeeded afterward, so the next real-hardware test
+  tells us whether the FLR is doing anything at all before adding a
+  further escalation (e.g. an explicit D3hot->D0 power-cycle, which
+  actually removes power from the ASIC rather than issuing a logical
+  reset).
+- Caveat: this logging is only reachable via the RESET branch (a TX
+  watchdog timeout). The LINK_CHANGE branch (`atl1c_check_link_status()`)
+  - which real-hardware evidence suggests is the path actually exercised
+  on a plain link flap with no pending traffic - is not instrumented and
+  has none of 1.1/1.2's fixes either. May need to see nothing logged at
+  all, which would itself be informative.
+
 ## 1.2 - 2026-09-11 (untested, pending validation)
 
 - 1.1 was tested on `proxy`: the PCIe FLR escalation never fired (the MAC
