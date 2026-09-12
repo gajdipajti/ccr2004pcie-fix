@@ -535,6 +535,8 @@ struct atl1c_adapter {
 	atomic_t irq_sem;
 
 	struct work_struct common_task;
+	struct delayed_work reset_retry_work;
+	int reset_retry_count;
 	struct timer_list watchdog_timer;
 	struct timer_list phy_config_timer;
 

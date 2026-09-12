@@ -75,7 +75,7 @@ static void atl1c_disable_l0s_l1(struct atl1c_hw *hw);
 static void atl1c_set_aspm(struct atl1c_hw *hw, u16 link_speed);
 static void atl1c_start_mac(struct atl1c_adapter *adapter);
 static int atl1c_up(struct atl1c_adapter *adapter);
-static void atl1c_down(struct atl1c_adapter *adapter);
+static int atl1c_down(struct atl1c_adapter *adapter);
 static int atl1c_reset_mac(struct atl1c_hw *hw);
 static void atl1c_reset_dma_ring(struct atl1c_adapter *adapter);
 static int atl1c_configure(struct atl1c_adapter *adapter);
@@ -248,12 +248,13 @@ void atl1c_reinit_locked(struct atl1c_adapter *adapter)
 	clear_bit(__AT_RESETTING, &adapter->flags);
 }
 
-static void atl1c_check_link_status(struct atl1c_adapter *adapter)
+static int atl1c_check_link_status(struct atl1c_adapter *adapter)
 {
 	struct atl1c_hw *hw = &adapter->hw;
 	struct net_device *netdev = adapter->netdev;
 	struct pci_dev    *pdev   = adapter->pdev;
 	int err;
+	int mac_reset_err = 0;
 	unsigned long flags;
 	u16 speed, duplex;
 	bool link;
@@ -266,7 +267,8 @@ static void atl1c_check_link_status(struct atl1c_adapter *adapter)
 		/* link down */
 		netif_carrier_off(netdev);
 		hw->hibernate = true;
-		if (atl1c_reset_mac(hw))
+		mac_reset_err = atl1c_reset_mac(hw);
+		if (mac_reset_err)
 			dev_warn(&pdev->dev, "reset mac failed\n");
 		/*
 		 * This only resets the MAC. A PCIe link event on a
@@ -290,7 +292,7 @@ static void atl1c_check_link_status(struct atl1c_adapter *adapter)
 		err = atl1c_get_speed_and_duplex(hw, &speed, &duplex);
 		spin_unlock_irqrestore(&adapter->mdio_lock, flags);
 		if (unlikely(err))
-			return;
+			return 0;
 		/* link result is our setting */
 		if (adapter->link_speed != speed ||
 		    adapter->link_duplex != duplex) {
@@ -310,6 +312,7 @@ static void atl1c_check_link_status(struct atl1c_adapter *adapter)
 		if (!netif_carrier_ok(netdev))
 			netif_carrier_on(netdev);
 	}
+	return mac_reset_err;
 }
 
 static void atl1c_link_chg_event(struct atl1c_adapter *adapter)
@@ -338,6 +341,59 @@ static void atl1c_link_chg_event(struct atl1c_adapter *adapter)
 	schedule_work(&adapter->common_task);
 }
 
+/*
+ * A MAC left wedged by a PCIe link event (e.g. a neighboring device
+ * rebooting) cannot be fixed by any in-band trick attempted within a
+ * second or two of the failure - confirmed on real hardware that neither
+ * a PCIe FLR nor a D3hot->D0 power-cycle helps at that point, because the
+ * link partner is often a whole separate device (e.g. a router) still
+ * mid-reboot, which can take tens of seconds. Back off and retry instead
+ * of giving up (or pretending a fake "link up" at a garbage speed is
+ * real) after a single immediate attempt.
+ */
+#define ATL1C_RESET_RETRY_MAX		6
+#define ATL1C_RESET_RETRY_DELAY_SECS	5
+#define ATL1C_RESET_RETRY_DELAY_CAP	30
+
+static void atl1c_schedule_reset_retry(struct atl1c_adapter *adapter,
+					unsigned long event_bit)
+{
+	unsigned int delay_secs;
+
+	if (adapter->reset_retry_count >= ATL1C_RESET_RETRY_MAX) {
+		dev_err(&adapter->pdev->dev,
+			"MAC reset still failing after %d retries over ~%ds, giving up\n",
+			adapter->reset_retry_count,
+			adapter->reset_retry_count * ATL1C_RESET_RETRY_DELAY_SECS);
+		adapter->reset_retry_count = 0;
+		return;
+	}
+
+	adapter->reset_retry_count++;
+	delay_secs = min_t(unsigned int,
+			    ATL1C_RESET_RETRY_DELAY_SECS *
+			    adapter->reset_retry_count,
+			    ATL1C_RESET_RETRY_DELAY_CAP);
+	dev_warn(&adapter->pdev->dev,
+		 "MAC reset failed (retry %d/%d), retrying in %us - the"
+		 " link partner may still be rebooting\n",
+		 adapter->reset_retry_count, ATL1C_RESET_RETRY_MAX, delay_secs);
+	set_bit(event_bit, &adapter->work_event);
+	schedule_delayed_work(&adapter->reset_retry_work,
+			       delay_secs * HZ);
+}
+
+static void atl1c_reset_retry_task(struct work_struct *work)
+{
+	struct atl1c_adapter *adapter = container_of(to_delayed_work(work),
+			struct atl1c_adapter, reset_retry_work);
+
+	if (test_bit(__AT_DOWN, &adapter->flags))
+		return;
+
+	schedule_work(&adapter->common_task);
+}
+
 static void atl1c_common_task(struct work_struct *work)
 {
 	struct atl1c_adapter *adapter;
@@ -351,13 +407,18 @@ static void atl1c_common_task(struct work_struct *work)
 
 	if (test_and_clear_bit(ATL1C_WORK_EVENT_RESET, &adapter->work_event)) {
 		netif_device_detach(netdev);
+		if (atl1c_down(adapter))
+			atl1c_schedule_reset_retry(adapter,
+						   ATL1C_WORK_EVENT_RESET);
+		else
+			adapter->reset_retry_count = 0;
 		/*
-		 * atl1c_down()'s MAC reset (atl1c_reset_mac()) already
-		 * escalates to a PCI function power-cycle on failure, and
-		 * atl1c_up() -> atl1c_check_link_status() already resets the
-		 * PHY if the link is still down - nothing further needed here.
+		 * Always pair with atl1c_up() immediately, success or not:
+		 * atl1c_down() already freed the IRQ, and atl1c_free_irq()
+		 * has no guard against a double-free, so a retry must never
+		 * skip re-requesting it here. atl1c_up() -> check_link_status
+		 * also resets the PHY if the link is still down.
 		 */
-		atl1c_down(adapter);
 		atl1c_up(adapter);
 		netif_device_attach(netdev);
 	}
@@ -365,7 +426,11 @@ static void atl1c_common_task(struct work_struct *work)
 	if (test_and_clear_bit(ATL1C_WORK_EVENT_LINK_CHANGE,
 		&adapter->work_event)) {
 		atl1c_irq_disable(adapter);
-		atl1c_check_link_status(adapter);
+		if (atl1c_check_link_status(adapter))
+			atl1c_schedule_reset_retry(adapter,
+						   ATL1C_WORK_EVENT_LINK_CHANGE);
+		else
+			adapter->reset_retry_count = 0;
 		atl1c_irq_enable(adapter);
 	}
 }
@@ -1297,36 +1362,10 @@ static int atl1c_reset_mac(struct atl1c_hw *hw)
 	/* Wait at least 10ms for All module to be Idle */
 
 	if (atl1c_wait_until_idle(hw, IDLE_STATUS_MASK)) {
-		/*
-		 * A register-level soft reset can fail to clear a MAC left
-		 * wedged by a PCIe link event (e.g. a neighboring device's
-		 * reboot flapping the link). Confirmed on real hardware that
-		 * a PCIe FLR (pci_reset_function()) doesn't help either: the
-		 * driver goes on to report a fake "link up" at a garbage
-		 * speed (0xffff), which then times out again on the first
-		 * real TX attempt. Only fully power-cycling the PCI function
-		 * (D3hot -> D0) - which is what a manual PCI remove+rescan
-		 * does as a side effect - has produced a real, working link
-		 * in testing. pci_set_power_state() takes no lock the PCI
-		 * core also needs, so it's safe to call unconditionally here
-		 * regardless of caller context (unlike pci_reset_function(),
-		 * which would deadlock under ->probe()/->suspend()/->resume()).
-		 */
-		dev_warn(&pdev->dev,
-			"MAC state machine can't be idle since disabled for"
-			" 10ms, power-cycling the PCI function\n");
-		pci_save_state(pdev);
-		pci_set_power_state(pdev, PCI_D3hot);
-		msleep(10);
-		pci_set_power_state(pdev, PCI_D0);
-		pci_restore_state(pdev);
-
-		if (atl1c_wait_until_idle(hw, IDLE_STATUS_MASK)) {
-			dev_err(&pdev->dev,
-				"MAC state machine can't be idle since"
-				" disabled for 10ms second\n");
-			return -1;
-		}
+		dev_err(&pdev->dev,
+			"MAC state machine can't be idle since"
+			" disabled for 10ms second\n");
+		return -1;
 	}
 	AT_WRITE_REG(hw, REG_MASTER_CTRL, ctrl_data);
 
@@ -2469,10 +2508,11 @@ err_up:
 	return err;
 }
 
-static void atl1c_down(struct atl1c_adapter *adapter)
+static int atl1c_down(struct atl1c_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
 	int i;
+	int err;
 
 	atl1c_del_timer(adapter);
 	adapter->work_event = 0; /* clear all event */
@@ -2489,12 +2529,13 @@ static void atl1c_down(struct atl1c_adapter *adapter)
 	/* disable ASPM if device inactive */
 	atl1c_disable_l0s_l1(&adapter->hw);
 	/* reset MAC to disable all RX/TX */
-	atl1c_reset_mac(&adapter->hw);
+	err = atl1c_reset_mac(&adapter->hw);
 	msleep(1);
 
 	adapter->link_speed = SPEED_0;
 	adapter->link_duplex = -1;
 	atl1c_reset_dma_ring(adapter);
+	return err;
 }
 
 /**
@@ -2554,6 +2595,7 @@ static int atl1c_close(struct net_device *netdev)
 	WARN_ON(test_bit(__AT_RESETTING, &adapter->flags));
 	set_bit(__AT_DOWN, &adapter->flags);
 	cancel_work_sync(&adapter->common_task);
+	cancel_delayed_work_sync(&adapter->reset_retry_work);
 	atl1c_down(adapter);
 	atl1c_free_ring_resources(adapter);
 	return 0;
@@ -2788,6 +2830,7 @@ static int atl1c_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	atl1c_hw_set_mac_addr(&adapter->hw, adapter->hw.mac_addr);
 	INIT_WORK(&adapter->common_task, atl1c_common_task);
+	INIT_DELAYED_WORK(&adapter->reset_retry_work, atl1c_reset_retry_task);
 	adapter->work_event = 0;
 	err = register_netdev(netdev);
 	if (err) {

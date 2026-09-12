@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.6 - 2026-09-12 (untested, pending validation)
+
+- 1.5's D3hot->D0 power-cycle was tested on real hardware and made
+  things worse: `pci_set_power_state()` reported "device inaccessible"
+  for both transitions, and a new failure appeared that had never shown
+  up before - `Unable to allocate MSI interrupt Error: -22`. "Device
+  inaccessible" means PCI config-space reads for this function were
+  returning all-ones at that moment - the PCIe link itself was briefly
+  unreachable, not just the Ethernet MAC/PHY. No in-band trick (soft
+  reset, PHY reset, FLR, power-state change) can work at the exact
+  moment the config space itself doesn't respond.
+- Root cause (current best understanding): the CCR2004 is a whole
+  separate router rebooting, which takes tens of seconds - every
+  recovery attempt so far has tried to fix things within ~1-2 seconds
+  of the failure, guaranteed to fail regardless of technique. The only
+  thing that has ever reliably worked (manual PCI remove+rescan) likely
+  works largely because enough real wall-clock time passes for a human
+  to run several commands, not because of anything unique to that
+  specific recovery mechanism.
+- Fix: replaced the immediate D3/D0 attempt with a backing-off delayed
+  retry. When `atl1c_reset_mac()` fails (via either `atl1c_down()`'s
+  RESET path or `atl1c_check_link_status()`'s LINK_CHANGE path),
+  instead of giving up immediately, schedule a delayed retry
+  (`schedule_delayed_work`) that re-triggers the same recovery path
+  after a real delay: 5s, 10s, 15s, ... capped at 30s, up to 6 attempts
+  (~105s total) before finally giving up and logging.
+- `atl1c_down()`+`atl1c_up()` are always still called as an immediate,
+  paired cycle on every attempt (never skipped): `atl1c_free_irq()` has
+  no guard against a double-free, so a retry must never call
+  `atl1c_down()` again without an intervening `atl1c_up()` having
+  re-requested the IRQ first.
+- Needs the same reboot-cycle validation as every prior version -
+  watch for the new "MAC reset failed (retry N/6), retrying in Ns"
+  log line, and confirm the eventual recovery reports a real
+  negotiated speed (not 0xffff) once it succeeds.
+
 ## 1.5 - 2026-09-12 (untested, pending validation)
 
 - 1.4 was tested on `proxy` with full real-hardware logging. Result:
