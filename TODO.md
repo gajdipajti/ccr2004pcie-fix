@@ -4,14 +4,10 @@
 
 - [x] Decided: send v2 now, as patch 1 of the 3-patch series (see below),
       alongside a reply to the AI review rather than waiting further.
-- [ ] v2: add `Fixes: 43250ddd75a35d ("atl1c: Atheros L1C Gigabit Ethernet
-      driver")` and `Cc: stable@vger.kernel.org` (confirmed real commit,
-      review's claim checks out). Not yet applied to the actual commit.
-- [ ] v2: expand the changelog with the reproduction details already
-      written up in `mail/0001-reply.md` - kernel `7.0.0-31-generic` /
-      `7.0.14-11-pve`, AR8151 v2.0 4-port card, Mikrotik CCR2004
-      link-partner reboot, both dmesg excerpts. Not yet applied to the
-      actual commit.
+- [x] v2 commit message written: `mail/0002-patch1-commit-message.md` -
+      `Fixes: 43250ddd75a35d`, `Cc: stable@vger.kernel.org`, and both
+      dmesg excerpts folded in. Same code diff as v1, unchanged. Not yet
+      actually committed on `raven`.
 
 ## Sibling driver patches (same bug, confirmed unfixed, no workaround exists)
 
