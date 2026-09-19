@@ -35,22 +35,47 @@
 
 ## Separate bug found by the AI review (real, independently confirmed)
 
-- [ ] `atl1c_common_task()`'s LINK_CHANGE branch only masks IRQs
+- [x] `atl1c_common_task()`'s LINK_CHANGE branch only masks IRQs
       (`atl1c_irq_disable()`), never calls `napi_disable()`/
       `napi_synchronize()`, unlike the RESET branch's `atl1c_down()`.
-- [ ] `atl1c_check_link_status()` -> `atl1c_reset_dma_ring()` ->
+- [x] `atl1c_check_link_status()` -> `atl1c_reset_dma_ring()` ->
       `atl1c_clean_tx_ring()` unconditionally walks every ring entry and
       zeroes `next_to_clean`, while NAPI (`atl1c_clean_tx()`) can run
       concurrently on the same entries.
-- [ ] `atl1c_clean_buffer()`'s only guard is a bare, unsynchronized
+- [x] `atl1c_clean_buffer()`'s only guard is a bare, unsynchronized
       `buffer_info->flags & ATL1C_BUFFER_FREE` read/set - no lock, no CAS.
       Confirmed by direct source read: two contexts can both pass the check
       for the same buffer and double `dma_unmap_single()`/
       `napi_consume_skb()` it. The two `atomic_set()`s on `next_to_clean`
       can also race.
-- [ ] Fix: add `napi_disable()`/`napi_synchronize()` around the reset in the
-      LINK_CHANGE path, matching what `atl1c_down()` already does correctly.
-      Needs its own patch/changelog, separate from the tpd_cons clamp.
+- [x] Fix drafted: `napi_disable()`/`napi_enable()` for all tx/rx queues
+      wrapped around the LINK_CHANGE branch's call to
+      `atl1c_check_link_status()`, matching what `atl1c_down()`/
+      `atl1c_up()` already do. checkpatch clean (0 errors/warnings).
+      Verified safe against `atl1c_check_link_status()`'s *other* caller
+      (`atl1c_up()`): putting the disable/enable inside the shared
+      function instead would have double-enabled NAPI there and hit
+      `BUG_ON(!test_bit(NAPI_STATE_SCHED, ...))` in `napi_enable_locked()`
+      - confirmed against the real `net/core/dev.c` implementation before
+      settling on wrapping the one call site instead.
+- [x] Audited the sibling drivers for the same gap:
+    - `atl1e` - not vulnerable. `atl1e_check_link()` never resets rings on
+      ordinary link-change (just an RX-enable bit + carrier state); ring
+      resets only happen via the separate, already NAPI-guarded
+      `atl1e_reinit_locked()` -> `atl1e_down()` path.
+    - `atl1`/`atlx` - not vulnerable, same reason: `atl1_check_link()`
+      only touches carrier state.
+    - `alx` (newest, actively-maintained sibling) - not vulnerable, but
+      for a real reason, not architectural avoidance: `alx_check_link()`
+      *does* reset rings on link-down (`alx_reinit_rings()`), but calls
+      `alx_netif_stop()` first, which does call `napi_disable()` for
+      every queue before any ring is touched. Gets it right.
+    - Conclusion: `atl1c` is uniquely affected - the only driver in the
+      family that resets rings on an ordinary link-change *and* forgets
+      to disable NAPI first. No additional sibling patches needed for
+      this bug.
+- [ ] Write the commit message and send as its own standalone patch (not
+      part of the 3-patch series - different bug, `atl1c`-only).
 
 ## Mikrotik CCR2004 / RouterOS side (separate track, not an upstream bug)
 
