@@ -74,8 +74,13 @@
       family that resets rings on an ordinary link-change *and* forgets
       to disable NAPI first. No additional sibling patches needed for
       this bug.
-- [ ] Write the commit message and send as its own standalone patch (not
-      part of the 3-patch series - different bug, `atl1c`-only).
+- [x] Commit message written: `mail/0003-napi-sync-commit-message.md`.
+      Includes `Fixes: 5e5c0964d9b93d ("atl1c: do MAC-reset when PHY link
+      down")` (the actual commit that introduced the unguarded reset,
+      found via `git blame`) and the sibling-audit conclusion as context.
+- [ ] `git commit -s`, `checkpatch.pl`, `get_maintainer.pl`, `send-email`
+      on `raven` - send as its own standalone patch, not part of the
+      3-patch series (different bug, `atl1c`-only).
 
 ## Mikrotik CCR2004 / RouterOS side (separate track, not an upstream bug)
 
