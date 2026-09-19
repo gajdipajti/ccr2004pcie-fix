@@ -2,16 +2,16 @@
 
 ## Upstream `atl1c` patch (the soft-lockup fix)
 
-- [ ] Decide: send v2 now, or wait for a maintainer reply to v1 first (posted
-      2026-09-11, no reply yet as of 2026-09-17 other than the AI-generated
-      review).
+- [x] Decided: send v2 now, as patch 1 of the 3-patch series (see below),
+      alongside a reply to the AI review rather than waiting further.
 - [ ] v2: add `Fixes: 43250ddd75a35d ("atl1c: Atheros L1C Gigabit Ethernet
       driver")` and `Cc: stable@vger.kernel.org` (confirmed real commit,
-      review's claim checks out).
-- [ ] v2: expand the changelog with actual reproduction details - kernel
-      `7.0.0-31-generic`, Ubuntu 26.04, AR8151 v2.0 4-port card, Mikrotik
-      CCR2004 link-partner reboot, the soft lockup trace
-      (`RIP: atl1c_clean_tx+0x142/0x2d0`).
+      review's claim checks out). Not yet applied to the actual commit.
+- [ ] v2: expand the changelog with the reproduction details already
+      written up in `mail/0001-reply.md` - kernel `7.0.0-31-generic` /
+      `7.0.14-11-pve`, AR8151 v2.0 4-port card, Mikrotik CCR2004
+      link-partner reboot, both dmesg excerpts. Not yet applied to the
+      actual commit.
 
 ## Sibling driver patches (same bug, confirmed unfixed, no workaround exists)
 
@@ -27,11 +27,15 @@
       DRIVERS) covers all three.
 - [x] Cover letter drafted (0/3, summarizes the shared bug across all
       three drivers).
-- [ ] Decide: fold the v2 details (`Fixes:`/`Cc: stable`, expanded repro)
-      into patch 1 of this series now, or send v1's text as-is and do a
-      separate v2 round later.
-- [ ] `git commit -s` each patch on `raven`, `checkpatch.pl`,
-      `get_maintainer.pl`, `send-email` as a series (not yet sent).
+- [x] Reply draft to the AI review written: `mail/0001-reply.md`. Answers
+      all three points - confirms `Fixes:`/`Cc: stable` for v2, gives the
+      real reproduction details requested (kernel versions, hardware,
+      both dmesg excerpts), and states plainly that only atl1c has been
+      validated on real hardware, atl1e/atl1 by code inspection only.
+      Also settles the "fold v2 details in" question: yes, per the reply.
+- [ ] `git commit -s` each patch on `raven` (patch 1 with the v2 details
+      folded in per the reply draft), `checkpatch.pl`, `get_maintainer.pl`,
+      `send-email` as a series (not yet sent), and send the reply itself.
 
 ## Separate bug found by the AI review (real, independently confirmed)
 
