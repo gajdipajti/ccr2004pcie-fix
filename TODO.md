@@ -25,7 +25,11 @@
 - [x] Decided: send as a 3-patch series (atl1c + atl1e + atl1), not three
       standalone patches. Same maintainer/list (netdev, ATLX ETHERNET
       DRIVERS) covers all three.
-- [ ] Write the cover letter for the series.
+- [x] Cover letter drafted (0/3, summarizes the shared bug across all
+      three drivers).
+- [ ] Decide: fold the v2 details (`Fixes:`/`Cc: stable`, expanded repro)
+      into patch 1 of this series now, or send v1's text as-is and do a
+      separate v2 round later.
 - [ ] `git commit -s` each patch on `raven`, `checkpatch.pl`,
       `get_maintainer.pl`, `send-email` as a series (not yet sent).
 
