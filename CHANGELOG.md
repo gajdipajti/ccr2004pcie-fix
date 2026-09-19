@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.9 - 2026-09-19 (untested, pending validation)
+
+- Not found through real-hardware testing this time - found by an
+  AI-generated review of the upstream `net: atl1c: fix soft lockup on
+  out-of-range tpd_cons read` patch (independently confirmed by direct
+  source reading before acting on it): `atl1c_common_task()`'s
+  LINK_CHANGE branch only masked IRQs before calling
+  `atl1c_check_link_status()`, which on link-down resets the MAC and,
+  via `atl1c_reset_dma_ring()`, unconditionally walks every ring entry
+  and zeroes `next_to_clean`/`next_to_use` - while TX/RX NAPI were
+  still enabled and could run concurrently on the same entries.
+  `atl1c_clean_buffer()`'s only guard against handling a buffer twice
+  is an unsynchronized flags read, no lock, no CAS - two contexts
+  could both pass it for the same buffer and both
+  `dma_unmap_single()`/`napi_consume_skb()` it.
+- Fix: `napi_disable()`/`napi_enable()` for all tx/rx queues wrapped
+  around the LINK_CHANGE branch's call to `atl1c_check_link_status()`,
+  matching what `atl1c_down()`/`atl1c_up()` already do for the RESET
+  branch.
+- Audited the sibling drivers (`atl1e`, `atl1`, `alx`) for the same
+  gap - none share it, `atl1c` is uniquely affected. See
+  `TODO.md`/`mail/0003-napi-sync-commit-message.md` for the full
+  writeup; that same patch is also headed upstream.
+- This is a race condition, not something a single dmesg line
+  confirms fixed. Needs a stress test (sustained TX traffic + repeated
+  real link flaps via Mikrotik reboot) rather than a single
+  reboot-cycle check, ideally with DMA-API debug or KASAN enabled to
+  actually catch a double-free if one occurs instead of relying on
+  timing luck.
+
 ## 1.8 - 2026-09-12 (untested, pending validation)
 
 - 1.7 tested on real hardware and found a self-inflicted bug: the new

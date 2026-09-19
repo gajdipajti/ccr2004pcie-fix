@@ -441,6 +441,7 @@ static void atl1c_common_task(struct work_struct *work)
 {
 	struct atl1c_adapter *adapter;
 	struct net_device *netdev;
+	int i;
 
 	adapter = container_of(work, struct atl1c_adapter, common_task);
 	netdev = adapter->netdev;
@@ -469,11 +470,19 @@ static void atl1c_common_task(struct work_struct *work)
 	if (test_and_clear_bit(ATL1C_WORK_EVENT_LINK_CHANGE,
 		&adapter->work_event)) {
 		atl1c_irq_disable(adapter);
+		for (i = 0; i < adapter->tx_queue_count; ++i)
+			napi_disable(&adapter->tpd_ring[i].napi);
+		for (i = 0; i < adapter->rx_queue_count; ++i)
+			napi_disable(&adapter->rrd_ring[i].napi);
 		if (atl1c_check_link_status(adapter))
 			atl1c_schedule_reset_retry(adapter,
 						   ATL1C_WORK_EVENT_LINK_CHANGE);
 		else
 			adapter->reset_retry_count = 0;
+		for (i = 0; i < adapter->tx_queue_count; ++i)
+			napi_enable(&adapter->tpd_ring[i].napi);
+		for (i = 0; i < adapter->rx_queue_count; ++i)
+			napi_enable(&adapter->rrd_ring[i].napi);
 		atl1c_irq_enable(adapter);
 	}
 }
