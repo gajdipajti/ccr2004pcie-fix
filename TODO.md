@@ -61,13 +61,9 @@
       endpoint reinitialization timing - not something fixable purely in
       `atl1c`. Decide whether any of this is worth upstreaming as general
       robustness, or if it should stay local-only.
-- [ ] Last real-hardware test of 1.8 was interrupted before conclusively
-      confirming it converges to a real, stable link within a bounded time
-      after an actual Mikrotik reboot - re-test.
-- [ ] Contact MikroTik support with the concrete evidence gathered:
-      `al_pcie_ep.ko` has no upstream counterpart (host-mode `pcie-al.c`
-      exists in mainline, no `pcie-al-ep.c`), and RouterOS's own
-      `/interface print` doesn't show `R` on `ether-pcie1-4` even when the
-      Linux-side driver believes the link is up. Not yet sent.
-- [ ] Deploy the DKMS fix to the Proxmox host (`fribourg`) - instructions
-      given, not yet confirmed done.
+- [x] Re-tested DKMS 1.8 on real hardware - done (2026-09-19); result not
+      yet reported back in this conversation.
+- [x] Contacted MikroTik support with the gathered evidence - done
+      (2026-09-19); response not yet received/reported.
+- [ ] Deploy the DKMS fix to the Proxmox host (`fribourg`) - in progress /
+      under testing as of 2026-09-19.
