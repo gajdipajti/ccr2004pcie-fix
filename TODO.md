@@ -81,16 +81,23 @@
 - [ ] `git commit -s`, `checkpatch.pl`, `get_maintainer.pl`, `send-email`
       on `raven` - send as its own standalone patch, not part of the
       3-patch series (different bug, `atl1c`-only).
+- [x] Applied to the local DKMS package too, bumped to 1.9 (adapted to
+      the already-modified LINK_CHANGE branch from 1.6-1.8). Untested -
+      it's a race fix, needs a stress test (sustained traffic + repeated
+      real link flaps), not just a clean reboot cycle. Ideally with
+      DMA-API debug or KASAN enabled to actually catch a double-free
+      rather than relying on timing luck.
 
 ## Mikrotik CCR2004 / RouterOS side (separate track, not an upstream bug)
 
-- [ ] Local DKMS package (`ccr2004pcie-fix`, currently 1.8) has recovery
+- [ ] Local DKMS package (`ccr2004pcie-fix`, currently 1.9) has recovery
       improvements (PHY reset, backoff retry, watchdog poll) that are
       reasonable defensive fixes but were built while chasing what turned
       out to be RouterOS's own `al_pcie_ep` (out-of-tree, proprietary)
       endpoint reinitialization timing - not something fixable purely in
-      `atl1c`. Decide whether any of this is worth upstreaming as general
-      robustness, or if it should stay local-only.
+      `atl1c`. Decide whether any of this (aside from the NAPI-sync fix,
+      which is already headed upstream on its own merits) is worth
+      upstreaming as general robustness, or if it should stay local-only.
 - [x] Re-tested DKMS 1.8 on real hardware - done (2026-09-19); result not
       yet reported back in this conversation.
 - [x] Contacted MikroTik support with the gathered evidence - done
