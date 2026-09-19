@@ -15,11 +15,19 @@
 
 ## Sibling driver patches (same bug, confirmed unfixed, no workaround exists)
 
-- [ ] `atl1e_clean_tx_irq()` in `atl1e_main.c` - same unguarded loop, same fix.
-- [ ] `atl1_intr_tx()` in `atlx/atl1.c` - same unguarded loop, same fix.
+- [x] `atl1e_clean_tx_irq()` in `atl1e_main.c` - patch drafted, checkpatch
+      clean (0 errors/warnings). Guard: `if (unlikely(hw_next_to_clean >=
+      tx_ring->count)) hw_next_to_clean = next_to_clean;`.
+- [x] `atl1_intr_tx()` in `atlx/atl1.c` - patch drafted, checkpatch clean
+      (0 errors/warnings). Guard: `if (unlikely(cmb_tpd_next_to_clean >=
+      tpd_ring->count)) cmb_tpd_next_to_clean = sw_tpd_next_to_clean;`.
       Confirmed no existing workaround despite initially thinking otherwise.
-- [ ] Decide: three separate patches, or one small series? Same maintainer/
-      list (netdev, ATLX ETHERNET DRIVERS) for all three.
+- [x] Decided: send as a 3-patch series (atl1c + atl1e + atl1), not three
+      standalone patches. Same maintainer/list (netdev, ATLX ETHERNET
+      DRIVERS) covers all three.
+- [ ] Write the cover letter for the series.
+- [ ] `git commit -s` each patch on `raven`, `checkpatch.pl`,
+      `get_maintainer.pl`, `send-email` as a series (not yet sent).
 
 ## Separate bug found by the AI review (real, independently confirmed)
 
