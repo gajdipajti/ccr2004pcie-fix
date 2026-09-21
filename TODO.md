@@ -29,9 +29,21 @@
       both dmesg excerpts), and states plainly that only atl1c has been
       validated on real hardware, atl1e/atl1 by code inspection only.
       Also settles the "fold v2 details in" question: yes, per the reply.
-- [ ] `git commit -s` each patch on `raven` (patch 1 with the v2 details
-      folded in per the reply draft), `checkpatch.pl`, `get_maintainer.pl`,
-      `send-email` as a series (not yet sent), and send the reply itself.
+- [x] `Fixes:`/`Cc: stable` added to patch 2 (atl1e) and patch 3 (atl1)
+      too, matching patch 1: `mail/0004-patch2-atl1e-commit-message.md`,
+      `mail/0005-patch3-atl1-commit-message.md`. Real introducing commits
+      found by tracing past a 2007 pure-reorder commit `git blame`
+      initially landed on - `a6a5325239c202` (atl1e) and `f3cc28c797604f`
+      (atl1), verified by diff inspection, not just blame output.
+- [x] Decided: NAPI-sync fix (previous section) stays out of this series -
+      not submitting it upstream for now, only the three driver fixes.
+- [ ] `git commit -s` each patch on `raven` using the three prepared
+      message files (patch 1/2/3), `checkpatch.pl`, `get_maintainer.pl`,
+      `send-email` as a series (not yet sent), and send the reply itself
+      (not yet sent). Walkthrough given in-session; do NOT cc
+      stable@vger.kernel.org directly on the send - the `Cc:` trailer in
+      each commit message is sufficient, picked up automatically by the
+      stable team's tooling once merged.
 
 ## Separate bug found by the AI review (real, independently confirmed)
 
