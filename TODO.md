@@ -48,13 +48,22 @@
       consistent across all three, dry-run verified correct threading
       (all 3 patches `In-Reply-To` the cover letter) before the real send.
       Sent as a new thread, not tied to the September v1 thread.
-- [ ] Send the reply (`mail/0001-reply.md`) into the *original* September
-      11 thread separately, using `--in-reply-to=<original-message-id>` -
-      this is what actually links the new series back to the review for
-      anyone following along. Not yet sent. Walkthrough given in-session;
-      do NOT cc stable@vger.kernel.org directly on the send - the `Cc:`
-      trailer in each commit message is sufficient, picked up automatically by the
-      stable team's tooling once merged.
+- [x] Reply sent (2026-09-21), threaded under the review reply's own
+      Message-ID (`<20260917004924.2461599-1-kuba@kernel.org>` - the
+      review came from Jakub Kicinski, a real netdev/net-next
+      co-maintainer, not an anonymous bot). SMTP-confirmed (`Result:
+      250`) from the correct identity (`tamas@rimpianto.com`).
+      First attempt from the wrong directory (`~/ccr2004pcie-fix`
+      instead of `~/net`) picked up no `sendemail.*` git config, fell
+      back to local `sendmail` and a different From address
+      (`tamasg@feti.hu`) - re-sent correctly from `~/net` afterwards.
+      Note for later: the `sendemail.*` settings live in
+      `~/net/.git/config` (repo-local), not globally - remember to
+      either run send-email from there or copy the config if sending
+      from another repo again.
+      Note: do NOT cc stable@vger.kernel.org directly on any send - the
+      `Cc:` trailer in each commit message is sufficient, picked up
+      automatically by the stable team's tooling once merged.
 
 ## Separate bug found by the AI review (real, independently confirmed)
 
