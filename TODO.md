@@ -37,6 +37,10 @@
       (atl1), verified by diff inspection, not just blame output.
 - [x] Decided: NAPI-sync fix (previous section) stays out of this series -
       not submitting it upstream for now, only the three driver fixes.
+      `mail/0001-reply.md` updated to say so explicitly: confirms the
+      finding is real, states the soft lockup is being prioritized as
+      the more urgent, deterministic fix, leaves the race as a possible
+      follow-up rather than promising one.
 - [ ] `git commit -s` each patch on `raven` using the three prepared
       message files (patch 1/2/3), `checkpatch.pl`, `get_maintainer.pl`,
       `send-email` as a series (not yet sent), and send the reply itself
