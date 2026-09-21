@@ -41,12 +41,19 @@
       finding is real, states the soft lockup is being prioritized as
       the more urgent, deterministic fix, leaves the race as a possible
       follow-up rather than promising one.
-- [ ] `git commit -s` each patch on `raven` using the three prepared
-      message files (patch 1/2/3), `checkpatch.pl`, `get_maintainer.pl`,
-      `send-email` as a series (not yet sent), and send the reply itself
-      (not yet sent). Walkthrough given in-session; do NOT cc
-      stable@vger.kernel.org directly on the send - the `Cc:` trailer in
-      each commit message is sufficient, picked up automatically by the
+- [x] 3-patch series committed and sent on `raven` (2026-09-21) - patch 1
+      amended in place from the original v1 commit, patches 2/3 applied
+      via `sed` one-liners after a copy-paste tab-mangling issue broke
+      the first `git apply` attempt. checkpatch clean, `get_maintainer.pl`
+      consistent across all three, dry-run verified correct threading
+      (all 3 patches `In-Reply-To` the cover letter) before the real send.
+      Sent as a new thread, not tied to the September v1 thread.
+- [ ] Send the reply (`mail/0001-reply.md`) into the *original* September
+      11 thread separately, using `--in-reply-to=<original-message-id>` -
+      this is what actually links the new series back to the review for
+      anyone following along. Not yet sent. Walkthrough given in-session;
+      do NOT cc stable@vger.kernel.org directly on the send - the `Cc:`
+      trailer in each commit message is sufficient, picked up automatically by the
       stable team's tooling once merged.
 
 ## Separate bug found by the AI review (real, independently confirmed)
