@@ -61,6 +61,20 @@ across all three.
 > Would adding napi_disable()/napi_synchronize() around the reset in
 > the link-change path be the right complement to this clamp?
 
-Agreed this looks real - still confirming the right fix, will follow
-up separately since it's an independent bug from the one this patch
-addresses.
+Agreed this looks real - confirmed it independently by reading the
+current code: atl1c_check_link_status()'s link-down path resets the
+rings via atl1c_reset_dma_ring() with NAPI still enabled, and
+atl1c_clean_buffer()'s only guard against handling a buffer twice is
+an unsynchronized flags read. Also checked the sibling drivers for
+the same gap: atl1e/atl1 don't reset rings on an ordinary link-change
+at all, and alx (the actively-maintained newer sibling) does reset
+rings there but calls napi_disable() first, so atl1c looks to be the
+only one affected.
+
+Not planning to submit a fix for it as part of this series, though -
+it's a real bug, but a narrow race that needs a specific timing
+window to trigger, versus the soft lockup this patch fixes, which is
+a deterministic hang triggered by an ordinary link event. Wanted to
+prioritize getting the more urgent, easily-reproduced fix in rather
+than holding it for a second, independent change. Happy to pick the
+race up as a separate patch afterwards if there's interest.
