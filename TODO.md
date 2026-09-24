@@ -16,6 +16,70 @@ mainline. `Cc: stable@vger.kernel.org` was on all three, so this
 should get backported to active LTS branches automatically - no
 further action needed for that part.
 
+### Timeline check (2026-09-24)
+
+Not yet in `v7.3-rc4` - checked the actual file content at that tag,
+the guard isn't there yet. It's currently only in `netdev/net.git`,
+pending Linus pulling the next batch of net fixes. Merging during
+`-rc` phase isn't a problem - `net` (fixes only) stays open and gets
+pulled continuously through the whole cycle, unlike `net-next`
+(features), which only merges during the post-release merge window.
+Expect it baked into `v7.3.0` once that ships.
+
+Checked which currently-active stable/LTS branches would backport
+cleanly (as of the current kernel.org release list: mainline
+7.3-rc4, stable 7.2.7 active, 7.1.13 EOL, longterm 6.18.53/6.12.111/
+6.6.157/6.1.188/5.15.221/5.10.270 all active):
+- `7.2.y`, `6.18.y`, `6.12.y`, `6.6.y`, `6.1.y`, `5.15.y` - checked
+  `5.15.y` and `6.6.y` directly, byte-for-byte identical code context
+  to what the patch targets. High confidence these backport cleanly
+  and automatically.
+- `5.10.y` - checked directly, does NOT match. Predates the 2021
+  multi-queue rework (the same Gatis Peisenieks/Mikrotik-driven
+  refactor found earlier in this investigation), so the same
+  underlying bug exists there but in a differently-shaped,
+  differently-named function (`atl1c_clean_tx_irq()` with a `reg`/
+  `REG_TPD_PRI0_CIDX`/`REG_TPD_PRI1_CIDX` pattern, not
+  `atl1c_qregs[tpd_ring->num].tpd_cons`). An automated cherry-pick
+  will fail outright here - reaching `5.10.y` needs a human stable
+  maintainer to hand-adapt it, which may or may not happen
+  unprompted. Not chasing this further unless it turns out to matter
+  for something specific.
+- `7.1.y` is EOL, won't get it regardless.
+
+### Ubuntu / Proxmox propagation chain (both pull-based, no direct push)
+
+Both `proxy` (Ubuntu 26.04 "resolute") and `fribourg` (Proxmox VE,
+built on the same Ubuntu 7.0.0 kernel base) get this fix only by
+passively waiting on a chain of periodic downstream syncs - there is
+no channel to submit a fix request directly to either team for a
+single commit:
+
+1. Upstream mainline -> active stable/LTS branches (above).
+2. Ubuntu's kernel team periodically pulls a batch of accumulated
+   upstream stable fixes into their own `linux` package (seen
+   directly in the Proxmox changelog user pasted: "update submodules
+   and patches to Ubuntu-7.0.0-38.38 - upstream stable changes from
+   6.18.43 and 7.1.7" - this is Ubuntu's own routine sync process,
+   not per-commit).
+3. Proxmox's `proxmox-kernel-7.0` package syncs from Ubuntu's package
+   on its own periodic cadence (same changelog entry: "update
+   submodules and patches to Ubuntu-7.0.0-38.38" - Proxmox literally
+   imports Ubuntu's kernel source/patches as its base).
+
+Going by the cadence visible in that changelog (roughly every 1-3
+weeks for Proxmox's own syncs), realistically a few weeks to a
+couple months end-to-end once the fix lands in whichever upstream
+stable branch Ubuntu tracks for `7.0.0` (most likely `6.18.y`, the
+one named in that changelog and confirmed on the active-branches
+list). Nothing to do here but wait and periodically check.
+
+Handoff point once it does land: keep running the local DKMS package
+(`ccr2004pcie-fix`) on both `proxy` and `fribourg` as the interim fix
+until then - check `dmesg`/kernel changelog for the commit before
+retiring it (already noted in `CHANGELOG.md`'s "Upstream status"
+entry).
+
 ## Upstream `atl1c` patch (the soft-lockup fix)
 
 - [x] Decided: send v2 now, as patch 1 of the 3-patch series (see below),
