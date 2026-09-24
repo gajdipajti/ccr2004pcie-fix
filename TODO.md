@@ -41,6 +41,34 @@ a different CCR2004 model than the one this whole repo is about, same
       the TX one, same underlying pattern. Full patch (code + message)
       verified checkpatch-clean (0 errors/warnings) via a real generated
       patch file, not just the diff alone.
+- [x] Checked whether Intel's `e1000`/`e1000e` (the driver family `atl1c`
+      is structurally modeled after) already has an established fix for
+      this class of error, to see if there's upstream precedent to cite:
+    - `e1000` sidesteps the bug class architecturally rather than
+      checking for it - page-fragment scatter/gather for the general RX
+      path (no `skb_put()` overflow risk at all), and for its copybreak
+      small-packet path it allocates a *new* skb sized to the
+      already-known device-reported length, so `skb_put()` can't
+      overflow by construction.
+    - `e1000e` (the more directly comparable, actively-maintained one) -
+      checked `e1000_clean_rx_irq()` line by line. Its non-copybreak
+      (large packet, reused fixed-size DMA buffer) path has the *exact
+      same* gap as `atl1c`: `length = le16_to_cpu(rx_desc->wb.upper.length);`
+      then `skb_put(skb, length)` with no check against
+      `adapter->rx_buffer_len` anywhere in between.
+    - Conclusion: no Intel precedent to cite - can't claim "matches the
+      equivalent check in e1000/e1000e" in the commit message, because
+      that check doesn't exist there either. Likely reason it hasn't
+      visibly bitten `e1000e` in the wild: Intel's silicon is presumably
+      well-behaved enough in practice, whereas this whole investigation
+      has repeatedly demonstrated the Attansic/Atheros/Qualcomm chips
+      `atl1c` targets *do* misbehave under real conditions (garbage
+      register reads, out-of-range values during resets) - making the
+      same theoretical gap a real, demonstrated problem here specifically.
+    - Whether the same `e1000e` gap is worth its own separate
+      investigation is a much bigger, more sensitive undertaking (a
+      widely-deployed production driver) - not pursuing this as a
+      side effect of this repo's work unless specifically asked to.
 - [ ] Honest caveat to carry into any reply/reproduction-details request:
       we have NOT reproduced this crash ourselves on real hardware - this
       is verified by direct source-code inspection (the bug is real and
