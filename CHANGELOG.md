@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.10 - 2026-09-24 (untested, pending validation)
+
+- New bug, unrelated to the original TX soft lockup: `atl1c_clean_rx()`
+  takes the packet length straight from the hardware RX-return-status
+  descriptor and calls `skb_put()` with no check against the actual
+  allocated RX buffer size. An oversized/corrupt descriptor trips
+  `skb_put()`'s own bounds check and panics the host
+  (`skb_over_panic` / `kernel BUG at net/core/skbuff.c`) - a full crash,
+  not just a lockup. Found via a third-party blog report on a different
+  CCR2004 model (1G-2XS-PCIe); verified independently against current
+  upstream source before acting on it. Same root-cause pattern as the
+  TX fix (blind trust in a hardware-reported value on this same
+  hardware family), traces to the same original 2009 driver-
+  introduction commit. Checked Intel's `e1000`/`e1000e` (the driver
+  family `atl1c` is modeled after) for an established fix to model
+  this on - neither has one; `e1000e`'s comparable RX path has the
+  identical gap, just apparently not yet demonstrated the same way on
+  Intel's more well-behaved silicon.
+- Fix: validate the reported length against `buffer_info->length`
+  before `skb_put()`; drop the packet instead of crashing on mismatch.
+  Same patch already drafted for upstream submission
+  (`mail/0006-rx-skb-put-commit-message.md` in this repo).
+- Not yet reproduced/validated on real hardware. A reproduction PoC
+  (`scripts/atl1c_rx_panic_poc.py`) is included - sends one raw
+  oversized Ethernet frame directly at a target `atl1c` interface,
+  bypassing normal IP MTU enforcement, to intentionally crash an
+  unpatched kernel and confirm a patched one survives it. Deliberately
+  destructive; read the script's own warning before running it against
+  real hardware.
+
 ## Upstream status (2026-09-24)
 
 The core fix this package exists for - the `atl1c_clean_tx()` soft
