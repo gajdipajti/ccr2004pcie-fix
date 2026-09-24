@@ -1,5 +1,21 @@
 # TODO
 
+## MERGED (2026-09-24)
+
+The 3-patch series was applied to `netdev/net.git` (main) by Paolo
+Abeni:
+- [1/3] net: atl1c: fix soft lockup on out-of-range tpd_cons read -
+  https://git.kernel.org/netdev/net/c/36c2009d90f2
+- [2/3] net: atl1e: fix soft lockup on out-of-range hw_next_to_clean read -
+  https://git.kernel.org/netdev/net/c/374bf9e4b90f
+- [3/3] net: atl1: fix soft lockup on out-of-range cmb_tpd_next_to_clean read -
+  https://git.kernel.org/netdev/net/c/43e746821f5f
+
+The soft lockup that started this whole investigation is now fixed in
+mainline. `Cc: stable@vger.kernel.org` was on all three, so this
+should get backported to active LTS branches automatically - no
+further action needed for that part.
+
 ## Upstream `atl1c` patch (the soft-lockup fix)
 
 - [x] Decided: send v2 now, as patch 1 of the 3-patch series (see below),

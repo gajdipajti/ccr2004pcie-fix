@@ -1,5 +1,29 @@
 # Changelog
 
+## Upstream status (2026-09-24)
+
+The core fix this package exists for - the `atl1c_clean_tx()` soft
+lockup on an out-of-range `tpd_cons` read - is now merged into
+mainline Linux (`netdev/net.git`), along with matching fixes for the
+`atl1e` and `atl1` sibling drivers found during review:
+
+- net: atl1c: fix soft lockup on out-of-range tpd_cons read -
+  https://git.kernel.org/netdev/net/c/36c2009d90f2
+- net: atl1e: fix soft lockup on out-of-range hw_next_to_clean read -
+  https://git.kernel.org/netdev/net/c/374bf9e4b90f
+- net: atl1: fix soft lockup on out-of-range cmb_tpd_next_to_clean read -
+  https://git.kernel.org/netdev/net/c/43e746821f5f
+
+All three were sent with `Cc: stable@vger.kernel.org`, so they should
+reach active LTS kernels via the normal stable backport process.
+Once your running kernel includes one of these, this DKMS package is
+no longer needed for that specific bug - check `dmesg`/kernel
+changelog for the commit before continuing to run the out-of-tree
+module. The recovery-path improvements (1.1 onward: PHY reset,
+backoff retry, watchdog poll) are unrelated to this upstream fix and
+were built for the separate Mikrotik CCR2004/RouterOS interaction -
+those stay local-only for now.
+
 ## 1.9 - 2026-09-19 (untested, pending validation)
 
 - Not found through real-hardware testing this time - found by an
