@@ -1,5 +1,56 @@
 # TODO
 
+## New bug found (2026-09-24): RX skb_over_panic, different from the TX fix
+
+Found via a third-party blog post reporting a real crash:
+https://www.jayme.ca/home/proxmoxlinux-crash-skb_over_panic-wccr2004-1g-2xs-pcie
+(Proxmox VE 9.1.0, kernel 6.17.2-1-pve, MikroTik CCR2004-1G-2XS-PCIe -
+a different CCR2004 model than the one this whole repo is about, same
+`atl1c`-facing PCIe architecture).
+
+- [x] Verified the blog's code-level claim directly against current
+      upstream `atl1c_main.c` (not just taken on faith): `atl1c_clean_rx()`
+      takes `length` straight from the hardware RX-return-status
+      descriptor (`rrs->word3`) and calls `skb_put(skb, length -
+      ETH_FCS_LEN)` with **no check** against `buffer_info->length` (the
+      actual allocated/DMA-mapped buffer size). An oversized descriptor
+      trips `skb_put()`'s own bounds check -> `skb_over_panic()` -> full
+      kernel panic, not just a lockup like the TX bug.
+- [x] Confirmed this isn't only triggerable by the blog's specific
+      MTU-mismatch scenario (RouterOS `l2mtu=1600` vs Linux `atl1c` at
+      MTU 1500) - it's the same blind-trust-in-hardware-value pattern as
+      the TX `tpd_cons` bug we already fixed, just on the RX length field.
+      A garbage/corrupted descriptor during a link reset (the exact
+      scenario this whole repo exists for) could trigger it too,
+      independent of any MTU setting.
+- [x] `git blame`'d the exact code: traces straight back to
+      `43250ddd75a35d` ("atl1c: Atheros L1C Gigabit Ethernet driver",
+      2009-02-18) - the *same* original commit as our first fix. This bug
+      has existed, completely unguarded, for the driver's entire ~17-year
+      history.
+- [x] Patch drafted: `if (unlikely(length < ETH_FCS_LEN || length -
+      ETH_FCS_LEN > buffer_info->length)) { dev_kfree_skb(skb); continue;
+      }` before the `skb_put()` call - turns "oversize/corrupt descriptor
+      -> kernel panic" into "-> drop the packet, keep running". Matches
+      the existing error-handling style a few lines above in the same
+      function, and reuses `dev_kfree_skb()`, the same free function this
+      file already uses for an equivalent "abandon this claimed skb" case.
+- [x] Commit message written: `mail/0006-rx-skb-put-commit-message.md` -
+      `Fixes: 43250ddd75a35d`, `Cc: stable@vger.kernel.org`, `Link:` to
+      the blog post, and an honest note that this is a different bug from
+      the TX one, same underlying pattern. Full patch (code + message)
+      verified checkpatch-clean (0 errors/warnings) via a real generated
+      patch file, not just the diff alone.
+- [ ] Honest caveat to carry into any reply/reproduction-details request:
+      we have NOT reproduced this crash ourselves on real hardware - this
+      is verified by direct source-code inspection (the bug is real and
+      the fix is correct), but the reproduction/crash trace is the blog
+      author's, not ours. Say so plainly if asked, same as the
+      atl1e/atl1 "not validated on real hardware" caveat from the first
+      series.
+- [ ] Not yet committed/sent on `raven`. Decide: standalone patch, or
+      wait and see if there's a natural pairing with anything else first.
+
 ## MERGED (2026-09-24)
 
 The 3-patch series was applied to `netdev/net.git` (main) by Paolo
