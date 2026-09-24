@@ -89,6 +89,95 @@ If the PCI rescan still fails to bring the card back, the MAC is wedged at
 the hardware level and needs a full reboot to reset — don't chase it
 further by hand.
 
+## Second bug (1.10): RX skb_over_panic on unvalidated descriptor length
+
+Unrelated to the TX soft lockup above - a full kernel crash, not a
+lockup. Found via a third-party report on a different CCR2004 model
+(1G-2XS-PCIe): https://www.jayme.ca/home/proxmoxlinux-crash-skb_over_panic-wccr2004-1g-2xs-pcie
+
+`atl1c_clean_rx()` takes the packet length straight from the
+hardware's RX-return-status descriptor and hands it to `skb_put()`
+with no check against the actual allocated RX buffer size:
+
+```c
+length = le16_to_cpu((rrs->word3 >> RRS_PKT_SIZE_SHIFT) & RRS_PKT_SIZE_MASK);
+...
+skb_put(skb, length - ETH_FCS_LEN);
+```
+
+If the hardware ever reports a length larger than the buffer actually
+DMA-mapped for that receive slot (`buffer_info->length`), `skb_put()`'s
+own bounds check trips `skb_over_panic()` and crashes the host:
+
+```
+skb_over_panic ... len:1553 put:1553 ... tail:0x691 end:0x680 dev:enp1s0f1
+kernel BUG at net/core/skbuff.c:211!
+```
+
+The originally reported trigger: RouterOS defaults a host-facing PCIe
+interface to `l2mtu=1600` (baby-jumbo frames), while the Linux `atl1c`
+interface was still at the default MTU 1500 (~1522-byte RX buffer) - a
+legitimate 1557-byte frame from the RouterOS side overran the smaller
+Linux-side buffer by 17 bytes. Same root-cause pattern as the TX bug
+above (blind trust in a hardware-reported value, same hardware family)
+- traces to the same original 2009 driver-introduction commit. Not
+limited to the MTU-mismatch scenario either: a garbage/corrupted
+descriptor during a link reset (what this whole package exists to
+work around) could trigger it too, independent of any MTU setting.
+
+Checked Intel's `e1000`/`e1000e` (the driver family `atl1c` is
+modeled after) for an established fix to cite - neither has one.
+`e1000` avoids the bug class architecturally (page-fragment RX, or
+allocating the skb sized to the already-known length for its
+copybreak path); `e1000e`'s directly comparable large-packet path has
+the *exact same* unchecked gap `atl1c` does. Likely explanation:
+Intel's silicon is well-behaved enough in practice that this
+theoretical gap hasn't visibly bitten it, whereas this whole
+investigation has repeatedly demonstrated the Attansic/Atheros/
+Qualcomm chips `atl1c` targets *do* misbehave under real conditions.
+
+### Fix
+
+Validate the reported length against `buffer_info->length` before
+`skb_put()`; drop the packet instead of crashing on mismatch:
+
+```c
+if (unlikely(length < ETH_FCS_LEN ||
+	     length - ETH_FCS_LEN > buffer_info->length)) {
+	dev_kfree_skb(skb);
+	continue;
+}
+skb_put(skb, length - ETH_FCS_LEN);
+```
+
+### Triggering / reproducing it
+
+This can be reproduced without a Mikrotik/RouterOS peer at all, since
+the bug is purely local driver logic - any oversized raw Ethernet
+frame at a genuine `atl1c` interface left at the default MTU 1500
+will do it. A ready-to-run PoC is included: `scripts/atl1c_rx_panic_poc.py`.
+
+**Warning: this crashes an unpatched kernel on purpose.** Only run it
+against hardware you own/control and are prepared to reboot.
+
+```
+# on the SENDING machine (needs a real L2 path to the target - same
+# switch/segment or a direct cable; this operates below IP, it won't
+# route). Its own MTU may need raising so its kernel doesn't reject
+# the oversized raw send on that side - doesn't affect the target:
+sudo ip link set <sender_iface> mtu 1600
+
+# confirm the TARGET atl1c interface is still at the default MTU:
+ip link show <target_atl1c_iface>   # should show mtu 1500
+
+# fire the oversized frame (needs scapy + root/CAP_NET_RAW):
+sudo python3 scripts/atl1c_rx_panic_poc.py <sender_iface> <target_mac>
+```
+
+Expected: unpatched kernel crashes (`skb_over_panic` / `kernel BUG at
+net/core/skbuff.c` in the target's console/serial log); patched
+kernel (1.10+) silently drops the one frame and keeps running.
+
 ## Notes
 
 Surveyed the sibling drivers in `drivers/net/ethernet/atheros/` for the
